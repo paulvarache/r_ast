@@ -8,11 +8,13 @@ use syn::{
     Ident, Token,
 };
 
+// Custom DSL to define AST nodes
 struct Dsl {
     name: Ident,
     fields: Punctuated<Branch, Token![,]>,
 }
 
+// Parse from the macro's token stream
 impl Parse for Dsl {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let content;
@@ -25,6 +27,7 @@ impl Parse for Dsl {
     }
 }
 
+// A branch for a sub type of an ast node
 struct Branch {
     name: Ident,
     fields: Punctuated<Param, Token![,]>,
@@ -43,6 +46,7 @@ impl Parse for Branch {
     }
 }
 
+// A param of a type of AST node
 struct Param {
     name: Ident,
     t: Ident,
@@ -59,6 +63,7 @@ impl Parse for Param {
     }
 }
 
+// Generate a struct for an type of AST node
 fn generate_struct(
     branch: &Branch,
     name: Ident,
@@ -72,6 +77,7 @@ fn generate_struct(
         let f_type = &field.t;
 
         let field_type = match name_str.as_str() {
+            // Token and Value are accepted types, do not box them
             "Token" | "Value" => quote!(#f_type),
             _ => quote!(Box<#f_type>),
         };
@@ -81,6 +87,7 @@ fn generate_struct(
         });
     });
     quote! {
+        #[derive(Debug, Clone)]
         pub struct #name {
             #(#fields),*,
         }
@@ -137,6 +144,7 @@ pub fn define_ast(_item: TokenStream) -> TokenStream {
     });
 
     let gen_enum = quote! {
+        #[derive(Debug, Clone)]
         pub enum #enum_name {
             #(#enum_fields)*
         }
@@ -159,8 +167,8 @@ pub fn define_ast(_item: TokenStream) -> TokenStream {
         #gen_enum
     });
 
-    // #[cfg(debug_assertions)]
-    // println!("{}", &ts);
+    #[cfg(debug_assertions)]
+    println!("{}", &ts);
 
     ts
 }
