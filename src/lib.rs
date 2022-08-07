@@ -1,12 +1,15 @@
-use convert_case::{Case, Casing};
+use convert_case::Case;
+use convert_case::Casing;
 use proc_macro::TokenStream;
-use quote::{quote, ToTokens};
-use syn::{
-    braced, parenthesized,
-    parse::{Parse, ParseStream},
-    punctuated::Punctuated,
-    Ident, Token,
-};
+use quote::quote;
+use quote::ToTokens;
+use syn::braced;
+use syn::parenthesized;
+use syn::parse::Parse;
+use syn::parse::ParseStream;
+use syn::punctuated::Punctuated;
+use syn::Ident;
+use syn::Token;
 
 // Custom DSL to define AST nodes
 struct Dsl {
@@ -74,7 +77,6 @@ impl ToTokens for Param {
     }
 }
 
-
 struct ParamType {
     container: Option<Ident>,
     name: Ident,
@@ -86,12 +88,18 @@ impl ToTokens for ParamType {
         let name_str = format!("{}", name);
 
         tokens.extend(match self.container.clone() {
-            Some(container) => quote!(#container<#name>),
+            Some(container) => {
+                let container_str = format!("{}", container);
+                match container_str.as_str() {
+                    "Option" => quote!(#container<Box<#name>>),
+                    _ => quote!(#container<#name>),
+                }
+            }
             None => match name_str.as_str() {
                 // Token and Value are accepted types, do not box them
                 "Token" | "Value" => quote!(#name),
                 _ => quote!(Box<#name>),
-            }
+            },
         })
     }
 }
@@ -103,9 +111,15 @@ impl Parse for ParamType {
             Ok(_) => {
                 let name: Ident = input.parse::<Ident>()?;
                 input.parse::<Token![>]>()?; // Eat the last type
-                Ok(ParamType { container: Some(ident), name })
-            },
-            Err(_) => Ok(ParamType { container: None, name: ident }),
+                Ok(ParamType {
+                    container: Some(ident),
+                    name,
+                })
+            }
+            Err(_) => Ok(ParamType {
+                container: None,
+                name: ident,
+            }),
         }
     }
 }
@@ -138,7 +152,7 @@ fn generate_struct(
 ///
 /// A visitor trait is also generated. Implementing the trait will allow you to traverse
 /// the AST for the defined node type
-/// 
+///
 /// Each subtype will have a `accept` method accepting a Visitor trait
 /// to help with visitor implementation
 ///
@@ -149,9 +163,9 @@ fn generate_struct(
 ///     Literal: { value: Value },
 /// ));
 /// ```
-/// 
+///
 /// Allows you to create ASTs like:
-/// 
+///
 /// ```
 /// let expr = Expr::Unary(UnaryExpr {
 ///     operator: Token::new(TokenType::Minus, "-".to_string(), None),
@@ -160,17 +174,17 @@ fn generate_struct(
 ///     }),
 /// })
 /// ```
-/// 
+///
 /// And create visitors like:
 /// ```
 /// struct MyVisitor {}
-/// 
+///
 /// impl MyVisitor {
 ///     pub fn print(&self, expr: &Expr) -> Result<String, LoxError> {
 ///         expr.accept(self);
 ///     }
 /// }
-/// 
+///
 /// impl ExprVisitor<String> for MyVisitor {
 ///     fn visit_binary_expr(&self, expr: &BinaryExpr) -> Result<String, LoxError> {
 ///         Ok(format!("{}{}", expr.operator, expr.right.accept(self)?))
@@ -179,7 +193,7 @@ fn generate_struct(
 ///         Ok(format!("{}", expr.value))
 ///     }
 /// }
-/// 
+///
 /// ```
 #[proc_macro]
 pub fn define_ast(_item: TokenStream) -> TokenStream {
