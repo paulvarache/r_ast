@@ -1,6 +1,6 @@
 use convert_case::{Case, Casing};
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{quote, ToTokens};
 use syn::{
     braced, parenthesized,
     parse::{Parse, ParseStream},
@@ -49,7 +49,7 @@ impl Parse for Branch {
 // A param of a type of AST node
 struct Param {
     name: Ident,
-    t: Ident,
+    t: ParamType,
 }
 
 impl Parse for Param {
@@ -63,29 +63,61 @@ impl Parse for Param {
     }
 }
 
+impl ToTokens for Param {
+    fn to_tokens(&self, tokens: &mut quote::__private::TokenStream) {
+        let field_name = &self.name;
+        let field_type = &self.t;
+
+        tokens.extend(quote! {
+            pub #field_name: #field_type
+        });
+    }
+}
+
+
+struct ParamType {
+    container: Option<Ident>,
+    name: Ident,
+}
+
+impl ToTokens for ParamType {
+    fn to_tokens(&self, tokens: &mut quote::__private::TokenStream) {
+        let name = self.name.clone();
+        let name_str = format!("{}", name);
+
+        tokens.extend(match self.container.clone() {
+            Some(container) => quote!(#container<#name>),
+            None => match name_str.as_str() {
+                // Token and Value are accepted types, do not box them
+                "Token" | "Value" => quote!(#name),
+                _ => quote!(Box<#name>),
+            }
+        })
+    }
+}
+
+impl Parse for ParamType {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let ident: Ident = input.parse()?;
+        match input.parse::<Token![<]>() {
+            Ok(_) => {
+                let name: Ident = input.parse::<Ident>()?;
+                input.parse::<Token![>]>()?; // Eat the last type
+                Ok(ParamType { container: Some(ident), name })
+            },
+            Err(_) => Ok(ParamType { container: None, name: ident }),
+        }
+    }
+}
+
 // Generate a struct for an type of AST node
 fn generate_struct(
     branch: &Branch,
     name: Ident,
     visitor_trait_name: &Ident,
 ) -> quote::__private::TokenStream {
-    let mut fields = Vec::new();
     let visit_fn_name = Ident::new(&format!("Visit{}", name).to_case(Case::Snake), name.span());
-    branch.fields.iter().for_each(|field| {
-        let field_name = &field.name;
-        let name_str = format!("{}", &field.t);
-        let f_type = &field.t;
-
-        let field_type = match name_str.as_str() {
-            // Token and Value are accepted types, do not box them
-            "Token" | "Value" => quote!(#f_type),
-            _ => quote!(Box<#f_type>),
-        };
-
-        fields.push(quote! {
-            pub #field_name: #field_type
-        });
-    });
+    let fields = branch.fields.iter();
     quote! {
         #[derive(Debug, Clone)]
         pub struct #name {
@@ -99,6 +131,56 @@ fn generate_struct(
     }
 }
 
+/// Defines structs and traits for an AST.
+/// The top level name will be used to construct an enum containing tuple structs for each subtype
+/// Each subtype will get its own struct with the fields defined in the syntax
+/// `Token` and `Value` types will be kept as is, any other type will be contained in a Box
+///
+/// A visitor trait is also generated. Implementing the trait will allow you to traverse
+/// the AST for the defined node type
+/// 
+/// Each subtype will have a `accept` method accepting a Visitor trait
+/// to help with visitor implementation
+///
+/// Example: Declare the following AST
+/// ```
+/// define_ast!(Expr(
+///     Unary: { operator: Token, right: Expr },
+///     Literal: { value: Value },
+/// ));
+/// ```
+/// 
+/// Allows you to create ASTs like:
+/// 
+/// ```
+/// let expr = Expr::Unary(UnaryExpr {
+///     operator: Token::new(TokenType::Minus, "-".to_string(), None),
+///     right: Expr::Literal(LiteralExpr {
+///         value: Value::Number(1.0),
+///     }),
+/// })
+/// ```
+/// 
+/// And create visitors like:
+/// ```
+/// struct MyVisitor {}
+/// 
+/// impl MyVisitor {
+///     pub fn print(&self, expr: &Expr) -> Result<String, LoxError> {
+///         expr.accept(self);
+///     }
+/// }
+/// 
+/// impl ExprVisitor<String> for MyVisitor {
+///     fn visit_binary_expr(&self, expr: &BinaryExpr) -> Result<String, LoxError> {
+///         Ok(format!("{}{}", expr.operator, expr.right.accept(self)?))
+///     }
+///     fn visit_literal_expr(&self, expr: &LiteralExpr) -> Result<String, LoxError> {
+///         Ok(format!("{}", expr.value))
+///     }
+/// }
+/// 
+/// ```
 #[proc_macro]
 pub fn define_ast(_item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(_item as Dsl);
@@ -167,8 +249,8 @@ pub fn define_ast(_item: TokenStream) -> TokenStream {
         #gen_enum
     });
 
-    #[cfg(debug_assertions)]
-    println!("{}", &ts);
+    // #[cfg(debug_assertions)]
+    // println!("{}", &ts);
 
     ts
 }
