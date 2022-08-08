@@ -72,7 +72,7 @@ impl ToTokens for Param {
         let field_type = &self.t;
 
         tokens.extend(quote! {
-            pub #field_name: #field_type
+            #field_name: #field_type
         });
     }
 }
@@ -131,16 +131,46 @@ fn generate_struct(
     visitor_trait_name: &Ident,
 ) -> quote::__private::TokenStream {
     let visit_fn_name = Ident::new(&format!("Visit{}", name).to_case(Case::Snake), name.span());
-    let fields = branch.fields.iter();
+    let fields = branch.fields.iter().map(|f| quote!(pub #f));
+    let params = branch.fields.iter().clone();
+    let field_names = branch.fields.iter().clone().map(|f| f.name.clone());
     quote! {
         #[derive(Debug, Clone)]
         pub struct #name {
             #(#fields),*,
         }
         impl #name {
+            pub fn new(#(#params),*) -> Self {
+                Self { #(#field_names),*, }
+            }
             fn accept<T>(&self, visitor: &dyn #visitor_trait_name<T>) -> Result<T, LoxError> {
                 visitor.#visit_fn_name(self)
             }
+        }
+    }
+}
+
+fn generate_new_helper(enum_name: Ident, branch: &Branch) -> quote::__private::TokenStream {
+    let params = branch.fields.iter().clone();
+    let create_names = branch.fields.iter().clone().map(|f| f.name.clone());
+
+    let field_name = branch.name.clone(); // Assign
+
+    let field_struct_name = Ident::new(
+        &format!("{}{}", field_name.clone(), enum_name.clone()),
+        branch.name.span(),
+    ); // AssignExpr
+
+    let fn_name = Ident::new(
+        &format!("new{}", field_name.clone()).to_case(Case::Snake),
+        branch.name.span(),
+    ); // new_assign
+
+    quote!{
+        // pub fn new_assign(name, value) -> Expr {
+        pub fn #fn_name (#(#params),*) -> #enum_name {
+            // Expr::Assign(AssignExpr::new(name, value))
+            #enum_name::#field_name(#field_struct_name::new(#(#create_names),*,))
         }
     }
 }
@@ -210,6 +240,7 @@ pub fn define_ast(_item: TokenStream) -> TokenStream {
     let mut visitor_fields = Vec::new();
     let mut structs = Vec::new();
     let mut match_accepts = Vec::new();
+    let mut new_helpers = Vec::new();
 
     input.fields.iter().for_each(|field| {
         let field_name = &field.name;
@@ -227,16 +258,20 @@ pub fn define_ast(_item: TokenStream) -> TokenStream {
             field.name.span(),
         );
 
+        let field_name_name = name.clone();
+
         enum_fields.push(quote! {
-            #field_name(#name),
+            #field_name(#field_name_name),
         });
         visitor_fields.push(quote! {
             fn #visitor_fn_name(&self, #visitor_property_name: &#name) -> Result<T, LoxError>
         });
-        structs.push(generate_struct(field, name, &visitor_trait_name));
+        structs.push(generate_struct(field, name.clone(), &visitor_trait_name));
         match_accepts.push(quote! {
             #enum_name::#field_name(#name_snake) => #name_snake.accept(#visitor_trait_name_snake)
         });
+
+        new_helpers.push(generate_new_helper(enum_name.clone(), field));
     });
 
     let gen_enum = quote! {
@@ -252,6 +287,7 @@ pub fn define_ast(_item: TokenStream) -> TokenStream {
                     #(#match_accepts),*,
                 }
             }
+            #(#new_helpers)*
         }
 
         pub trait #visitor_trait_name<T> {
@@ -263,8 +299,8 @@ pub fn define_ast(_item: TokenStream) -> TokenStream {
         #gen_enum
     });
 
-    // #[cfg(debug_assertions)]
-    // println!("{}", &ts);
+    #[cfg(debug_assertions)]
+    println!("{}", &ts);
 
     ts
 }
