@@ -87,19 +87,21 @@ impl ToTokens for ParamType {
         let name = self.name.clone();
         let name_str = format!("{}", name);
 
+        let type_stream = match name_str.as_str() {
+            // Token and Value are accepted types, do not box them
+            "Token" | "Value" => quote!(#name),
+            _ => quote!(Rc<#name>),
+        };
+
         tokens.extend(match self.container.clone() {
             Some(container) => {
                 let container_str = format!("{}", container);
                 match container_str.as_str() {
-                    "Option" => quote!(#container<Box<#name>>),
-                    _ => quote!(#container<#name>),
+                    "Option" => quote!(#container<Rc<#name>>),
+                    _ => quote!(Rc<#container<#type_stream>>),
                 }
             }
-            None => match name_str.as_str() {
-                // Token and Value are accepted types, do not box them
-                "Token" | "Value" => quote!(#name),
-                _ => quote!(Box<#name>),
-            },
+            None => type_stream.clone(),
         })
     }
 }
