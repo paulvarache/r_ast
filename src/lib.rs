@@ -139,11 +139,12 @@ fn generate_struct(
     quote! {
         #[derive(Debug, Clone)]
         pub struct #name {
+            pub span: Span,
             #(#fields),*,
         }
         impl #name {
-            pub fn new(#(#params),*) -> Self {
-                Self { #(#field_names),*, }
+            pub fn new(#(#params),*, span: Span) -> Self {
+                Self { #(#field_names),*, span }
             }
             fn accept<T>(&self, visitor: &dyn #visitor_trait_name<T>) -> Result<T, LoxError> {
                 visitor.#visit_fn_name(self)
@@ -170,9 +171,9 @@ fn generate_new_helper(enum_name: Ident, branch: &Branch) -> quote::__private::T
 
     quote!{
         // pub fn new_assign(name, value) -> Expr {
-        pub fn #fn_name (#(#params),*) -> #enum_name {
+        pub fn #fn_name (#(#params),*, span: Span) -> #enum_name {
             // Expr::Assign(AssignExpr::new(name, value))
-            #enum_name::#field_name(#field_struct_name::new(#(#create_names),*,))
+            #enum_name::#field_name(#field_struct_name::new(#(#create_names),*, span))
         }
     }
 }
@@ -243,6 +244,7 @@ pub fn define_ast(_item: TokenStream) -> TokenStream {
     let mut structs = Vec::new();
     let mut match_accepts = Vec::new();
     let mut new_helpers = Vec::new();
+    let mut span_match_branches = Vec::new();
 
     input.fields.iter().for_each(|field| {
         let field_name = &field.name;
@@ -274,6 +276,8 @@ pub fn define_ast(_item: TokenStream) -> TokenStream {
         });
 
         new_helpers.push(generate_new_helper(enum_name.clone(), field));
+
+        span_match_branches.push(quote!(#enum_name::#field_name(a) => a.span.clone()))
     });
 
     let gen_enum = quote! {
@@ -287,6 +291,11 @@ pub fn define_ast(_item: TokenStream) -> TokenStream {
             pub fn accept<T>(&self, #visitor_trait_name_snake: &dyn #visitor_trait_name<T>) -> Result<T, LoxError> {
                 match self {
                     #(#match_accepts),*,
+                }
+            }
+            pub fn span(&self) -> Span {
+                match self {
+                    #(#span_match_branches),*,
                 }
             }
             #(#new_helpers)*
