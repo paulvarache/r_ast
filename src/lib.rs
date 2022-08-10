@@ -139,12 +139,13 @@ fn generate_struct(
     quote! {
         #[derive(Debug, Clone)]
         pub struct #name {
+            pub id: usize,
             pub span: Span,
             #(#fields),*,
         }
         impl #name {
             pub fn new(#(#params),*, span: Span) -> Self {
-                Self { #(#field_names),*, span }
+                Self { #(#field_names),*, span, id: AST_NODE_COUNTER.fetch_add(1, Ordering::SeqCst) }
             }
             fn accept<T>(&self, visitor: &dyn #visitor_trait_name<T>) -> Result<T, LoxError> {
                 visitor.#visit_fn_name(self)
@@ -245,6 +246,7 @@ pub fn define_ast(_item: TokenStream) -> TokenStream {
     let mut match_accepts = Vec::new();
     let mut new_helpers = Vec::new();
     let mut span_match_branches = Vec::new();
+    let mut id_match_branches = Vec::new();
 
     input.fields.iter().for_each(|field| {
         let field_name = &field.name;
@@ -277,7 +279,8 @@ pub fn define_ast(_item: TokenStream) -> TokenStream {
 
         new_helpers.push(generate_new_helper(enum_name.clone(), field));
 
-        span_match_branches.push(quote!(#enum_name::#field_name(a) => a.span.clone()))
+        span_match_branches.push(quote!(#enum_name::#field_name(a) => a.span.clone()));
+        id_match_branches.push(quote!(#enum_name::#field_name(a) => a.id))
     });
 
     let gen_enum = quote! {
@@ -296,6 +299,11 @@ pub fn define_ast(_item: TokenStream) -> TokenStream {
             pub fn span(&self) -> Span {
                 match self {
                     #(#span_match_branches),*,
+                }
+            }
+            pub fn id(&self) -> usize {
+                match self {
+                    #(#id_match_branches),*,
                 }
             }
             #(#new_helpers)*
