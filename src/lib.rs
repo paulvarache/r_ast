@@ -1,14 +1,19 @@
 use convert_case::Case;
 use convert_case::Casing;
+
 use proc_macro::TokenStream;
 use quote::quote;
 use quote::ToTokens;
+use syn::Variant;
 use syn::braced;
 use syn::parenthesized;
 use syn::parse::Parse;
 use syn::parse::ParseStream;
+use syn::parse_macro_input;
 use syn::punctuated::Punctuated;
+use syn::DeriveInput;
 use syn::Ident;
+use syn::Lit;
 use syn::Token;
 
 // Custom DSL to define AST nodes
@@ -170,7 +175,7 @@ fn generate_new_helper(enum_name: Ident, branch: &Branch) -> quote::__private::T
         branch.name.span(),
     ); // new_assign
 
-    quote!{
+    quote! {
         // pub fn new_assign(name, value) -> Expr {
         pub fn #fn_name (#(#params),*, span: Span) -> #enum_name {
             // Expr::Assign(AssignExpr::new(name, value))
@@ -283,7 +288,7 @@ pub fn define_ast(_item: TokenStream) -> TokenStream {
         id_match_branches.push(quote!(#enum_name::#field_name(a) => a.id))
     });
 
-    let gen_enum = quote! {
+    TokenStream::from(quote! {
         #[derive(Debug, Clone)]
         pub enum #enum_name {
             #(#enum_fields)*
@@ -312,14 +317,115 @@ pub fn define_ast(_item: TokenStream) -> TokenStream {
         pub trait #visitor_trait_name<T> {
             #(#visitor_fields);*;
         }
+    })
+}
+
+#[proc_macro_derive(OpCodeEnum)]
+pub fn opcode_enum(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    let name = input.ident;
+
+    let expanded = match input.data {
+        syn::Data::Enum(en) => {
+            let branches = en.variants.iter().enumerate().map(|(i, variant)| {
+                let variant_name = &variant.ident;
+                let l = Lit::new(quote::__private::Literal::u8_suffixed(i as u8));
+                quote! {
+                    #l => #name::#variant_name
+                }
+            });
+            let to_string_branches = en.variants.iter().map(|variant| {
+                let variant_name = &variant.ident;
+                let to_string_name = format!("{}", &variant.ident).to_case(Case::ScreamingSnake);
+                let s = Lit::new(quote::__private::Literal::string(
+                    format!("OP_{to_string_name}").as_str(),
+                ));
+                quote! {
+                    #name::#variant_name => #s.to_string()
+                }
+            });
+
+            quote! {
+                impl Into<u8> for #name {
+                    fn into(self) -> u8 {
+                        self as u8
+                    }
+                }
+
+                impl From<u8> for #name {
+                    fn from(other: u8) -> Self {
+                        match other {
+                            #(#branches),*,
+                            _ => unreachable!()
+                        }
+                    }
+                }
+                impl ToString for OpCode {
+                    fn to_string(&self) -> String {
+                        match self {
+                            #(#to_string_branches),*,
+                        }
+                    }
+                }
+            }
+        }
+        syn::Data::Struct(_) => syn::Error::new(name.span(), "expected enum").to_compile_error(),
+        syn::Data::Union(_) => syn::Error::new(name.span(), "expected enum").to_compile_error(),
     };
 
-    let ts = TokenStream::from(quote! {
-        #gen_enum
-    });
+    println!("{expanded}");
 
-    #[cfg(debug_assertions)]
-    println!("{}", &ts);
-
-    ts
+    TokenStream::from(expanded)
 }
+
+
+#[proc_macro_derive(EnumIndex)]
+pub fn enum_index(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    let name = input.ident;
+
+    let expanded = match input.data {
+        syn::Data::Enum(en) => {
+            let index_branches = en.variants.iter().enumerate().map(|(i, variant)| {
+                let variant_name = &variant.ident;
+                let l = Lit::new(quote::__private::Literal::u8_suffixed(i as u8));
+                quote! {
+                    #name::#variant_name => #l
+                }
+            });
+            
+            let next_branches = en.variants.iter().enumerate().map(|(i, variant)| {
+                let variant_name = &variant.ident;
+                let l = Lit::new(quote::__private::Literal::u8_suffixed(i as u8));
+                quote! {
+                    #l => Some(#name::#variant_name)
+                }
+            });
+
+            quote! {
+                impl #name {
+                    pub fn get_enum_index(&self) -> u8 {
+                        match self {
+                            #(#index_branches),*,
+                        }
+                    }
+                    pub fn from_index(index: u8) -> Option<#name> {
+                        match index {
+                            #(#next_branches),*,
+                            _ => None,
+                        }
+                    }
+                }
+            }
+        }
+        syn::Data::Struct(_) => syn::Error::new(name.span(), "expected enum").to_compile_error(),
+        syn::Data::Union(_) => syn::Error::new(name.span(), "expected enum").to_compile_error(),
+    };
+
+    println!("{expanded}");
+
+    TokenStream::from(expanded)
+}
+
